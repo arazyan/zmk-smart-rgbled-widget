@@ -90,7 +90,10 @@ struct blink_item {
 static bool initialized = false;
 
 // cached RGB state
-static struct rgb_underglow_state cached_state;
+// static struct rgb_underglow_state cached_state;
+static bool cached_state_on;
+static int cached_state_current_effect;
+static struct zmk_led_hsb cached_state_color;
 
 // define message queue of blink work items, that will be processed by a
 // separate thread
@@ -267,25 +270,28 @@ static void set_rgb_leds(int8_t color, uint16_t duration_ms) {
     LOG_DBG("called color: %d, duration %d", color, duration_ms);
     if (led_current_color == COLOR_RESET && color != COLOR_RESET){
         //moving from reset state to non reset state -> save rgb state
-        zmk_rgb_underglow_get_full_state(&cached_state);
+        // zmk_rgb_underglow_get_full_state(&cached_state);
+        zmk_rgb_underglow_get_state(&cached_state_on);
+        cached_state_current_effect = zmk_rgb_underglow_calc_effect(0);
+        cached_state_color = zmk_rgb_underglow_calc_brt(0);
         LOG_DBG("saving underglow state: on %d, effect: %d",
-            cached_state.on, cached_state.current_effect);
+            cached_state_on, cached_state_current_effect);
     }
 
     //change state based on color now
     if(color == COLOR_RESET && led_current_color != COLOR_RESET){
         LOG_DBG("restoring underglow state: on %d, effect: %d",
-            cached_state.on, cached_state.current_effect);
+            cached_state_on, cached_state_current_effect);
 
-        zmk_rgb_underglow_set_hsb(cached_state.color);
-        zmk_rgb_underglow_select_effect(cached_state.current_effect);
-        if(cached_state.on){
+        zmk_rgb_underglow_set_hsb(cached_state_color);
+        zmk_rgb_underglow_select_effect(cached_state_current_effect);
+        if(cached_state_on){
             zmk_rgb_underglow_on();
         } else {
             zmk_rgb_underglow_off();
         }
     } else if(color != COLOR_RESET) {
-        zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID);
+        zmk_rgb_underglow_select_effect(0 /* UNDERGLOW_EFFECT_SOLID */);
         zmk_rgb_underglow_set_hsb(color_def[color]);
         if(color != 0){
             zmk_rgb_underglow_on();
