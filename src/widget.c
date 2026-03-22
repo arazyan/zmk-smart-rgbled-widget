@@ -38,13 +38,13 @@ static const char *color_names[] = {"black", "red",     "green", "yellow",
 
 static const struct zmk_led_hsb color_def[8] = {
     {0,0,0},
-    {0,100,100},
-    {120,100,100},
-    {60,100,100},
-    {240,100,100},
-    {300,100,100},
-    {180,100,100},
-    {0,0,100}
+    {0,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {120,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {60,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {240,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {300,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {180,100,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START},
+    {0,0,CONFIG_ZMK_RGB_UNDERGLOW_BRT_START}
 };
 
 #if SHOW_LAYER_COLORS
