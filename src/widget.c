@@ -89,8 +89,9 @@ struct blink_item {
 // flag to indicate whether the initial boot up sequence is complete
 static bool initialized = false;
 
-// cached RGB state
-static struct rgb_underglow_state cached_state;
+/* ZMK v0.3 compatibility: the underglow effect enum lives privately in
+ * app/src/rgb_underglow.c — SOLID is its first member. */
+#define UNDERGLOW_EFFECT_SOLID_COMPAT 0
 
 // define message queue of blink work items, that will be processed by a
 // separate thread
@@ -265,27 +266,22 @@ int8_t led_current_color = COLOR_RESET;
 
 static void set_rgb_leds(int8_t color, uint16_t duration_ms) {
     LOG_DBG("called color: %d, duration %d", color, duration_ms);
-    if (led_current_color == COLOR_RESET && color != COLOR_RESET){
-        //moving from reset state to non reset state -> save rgb state
-        zmk_rgb_underglow_get_full_state(&cached_state);
-        LOG_DBG("saving underglow state: on %d, effect: %d",
-            cached_state.on, cached_state.current_effect);
-    }
 
-    //change state based on color now
+    /* ZMK v0.3 compatibility: there is no public API to read back the
+     * user underglow state (zmk_rgb_underglow_get_full_state only
+     * exists in newer ZMK). The K:04 indicator is a dedicated status
+     * LED with no user state worth restoring, so between indications
+     * the strip is parked on solid black — WS2812-class LEDs latch
+     * their last frame, so an explicit black write is required to go
+     * dark. */
     if(color == COLOR_RESET && led_current_color != COLOR_RESET){
-        LOG_DBG("restoring underglow state: on %d, effect: %d",
-            cached_state.on, cached_state.current_effect);
+        LOG_DBG("parking status LED on solid black");
 
-        zmk_rgb_underglow_set_hsb(cached_state.color);
-        zmk_rgb_underglow_select_effect(cached_state.current_effect);
-        if(cached_state.on){
-            zmk_rgb_underglow_on();
-        } else {
-            zmk_rgb_underglow_off();
-        }
+        zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID_COMPAT);
+        zmk_rgb_underglow_set_hsb(color_def[0]);
+        zmk_rgb_underglow_on();
     } else if(color != COLOR_RESET) {
-        zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID);
+        zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID_COMPAT);
         zmk_rgb_underglow_set_hsb(color_def[color]);
         if(color != 0){
             zmk_rgb_underglow_on();
