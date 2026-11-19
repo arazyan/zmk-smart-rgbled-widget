@@ -271,3 +271,48 @@ DT_COMPAT_ZMK_BEHAVIOR_RGBLED_WIDGET := zmk,behavior-rgbled-widget
 config ZMK_BEHAVIOR_RGBLED_WIDGET
     bool
     default $(dt_compat_enabled,$(DT_COMPAT_ZMK_BEHAVIOR_RGBLED_WIDGET))
+
+config RGBLED_WIDGET_PROFILE_COLORS
+    bool "Show a persistent color for the active connected BLE profile"
+    default n
+    help
+      While a host is connected over Bluetooth on the active profile, keep
+      the LED lit with a color that identifies the profile. USB transport
+      turns the LED off; no host connected gives periodic white blinks.
+      Central side of splits only. Mutually exclusive with
+      CONFIG_RGBLED_WIDGET_SHOW_LAYER_COLORS.
+
+config RGBLED_WIDGET_PROFILE_BRIGHTNESS
+    int "Brightness of the persistent profile color (percent)"
+    range 0 100
+    default 20
+
+config RGBLED_WIDGET_PROFILE_COLOR_0
+    int "Color for BLE profile 0"
+    range 0 7
+    default $(COLOR_BLUE)
+
+config RGBLED_WIDGET_PROFILE_COLOR_1
+    int "Color for BLE profile 1"
+    range 0 7
+    default $(COLOR_GREEN)
+
+config RGBLED_WIDGET_PROFILE_COLOR_2
+    int "Color for BLE profile 2"
+    range 0 7
+    default $(COLOR_MAGENTA)
+
+config RGBLED_WIDGET_PROFILE_COLOR_3
+    int "Color for BLE profile 3"
+    range 0 7
+    default $(COLOR_CYAN)
+
+config RGBLED_WIDGET_PROFILE_COLOR_4
+    int "Color for BLE profile 4"
+    range 0 7
+    default $(COLOR_YELLOW)
+
+config RGBLED_WIDGET_DISCONNECT_BLINK_INTERVAL_MS
+    int "Interval between white blinks while nothing is connected"
+    default 3000
+

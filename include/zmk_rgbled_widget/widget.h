@@ -17,3 +17,8 @@ void indicate_connectivity(void);
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 void indicate_layer(void);
 #endif
+
+#define PROFILE_COLORS                                                                          \
+    (IS_ENABLED(CONFIG_RGBLED_WIDGET_PROFILE_COLORS)) &&                                         \
+        (IS_ENABLED(CONFIG_ZMK_BLE)) &&                                                          \
+        (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))

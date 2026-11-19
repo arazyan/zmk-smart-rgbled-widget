@@ -21,6 +21,10 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+#if IS_ENABLED(CONFIG_RGBLED_WIDGET_PROFILE_COLORS) && IS_ENABLED(CONFIG_RGBLED_WIDGET_SHOW_LAYER_COLORS)
+BUILD_ASSERT(0, "CONFIG_RGBLED_WIDGET_PROFILE_COLORS and CONFIG_RGBLED_WIDGET_SHOW_LAYER_COLORS are mutually exclusive");
+#endif
+
 #if !DT_HAS_CHOSEN(zmk_underglow)
 
 #error "A zmk,underglow chosen node must be declared"
@@ -46,6 +50,17 @@ static const struct zmk_led_hsb color_def[8] = {
     {180,100,100},
     {0,0,100}
 };
+
+#if PROFILE_COLORS
+// color index shown while a host is connected on each BLE profile
+static const int8_t profile_color_idx[] = {
+    CONFIG_RGBLED_WIDGET_PROFILE_COLOR_0,
+    CONFIG_RGBLED_WIDGET_PROFILE_COLOR_1,
+    CONFIG_RGBLED_WIDGET_PROFILE_COLOR_2,
+    CONFIG_RGBLED_WIDGET_PROFILE_COLOR_3,
+    CONFIG_RGBLED_WIDGET_PROFILE_COLOR_4,
+};
+#endif
 
 #if SHOW_LAYER_COLORS
 static const uint8_t layer_color_idx[] = {
@@ -296,6 +311,76 @@ static void set_rgb_leds(int8_t color, uint16_t duration_ms) {
     led_current_color = color;
 }
 
+// persistent profile-color status: the LED keeps showing the color of the
+// BLE profile a host is connected to; white double blinks when no host is
+// connected on the active profile; LED off while USB is the transport.
+#if PROFILE_COLORS
+
+// last persistent color applied; INT8_MIN means "dark / none"
+static int8_t led_persistent_color = -128;
+static int64_t last_disconnect_blink = 0;
+
+static struct zmk_led_hsb dimmed_color(int8_t color_idx) {
+    struct zmk_led_hsb hsb = color_def[color_idx];
+    hsb.b = (hsb.b * CONFIG_RGBLED_WIDGET_PROFILE_BRIGHTNESS) / 100;
+    return hsb;
+}
+
+static void park_led_black(void) {
+    zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID_COMPAT);
+    zmk_rgb_underglow_set_hsb(color_def[0]);
+    zmk_rgb_underglow_on();
+}
+
+static void apply_persistent_status(void) {
+    if (zmk_endpoints_selected().transport == ZMK_TRANSPORT_USB) {
+        // Wired connection: nothing Bluetooth-related to show, stay dark.
+        if (led_persistent_color != -128) {
+            LOG_INF("USB transport active, status LED off");
+            park_led_black();
+            led_persistent_color = -128;
+        }
+        return;
+    }
+
+    if (zmk_ble_active_profile_is_connected()) {
+        uint8_t profile = zmk_ble_active_profile_index();
+        int8_t color = (profile < sizeof(profile_color_idx)) ? profile_color_idx[profile] : 0;
+        if (color != led_persistent_color) {
+            LOG_INF("Connected on profile %d, LED shows %s", profile, color_names[color]);
+            zmk_rgb_underglow_select_effect(UNDERGLOW_EFFECT_SOLID_COMPAT);
+            zmk_rgb_underglow_set_hsb(dimmed_color(color));
+            zmk_rgb_underglow_on();
+            led_persistent_color = color;
+        }
+    } else if (led_persistent_color != -128) {
+        // No host on the active profile: park dark; the periodic white
+        // blinks below carry the signal between battery indications.
+        park_led_black();
+        led_persistent_color = -128;
+    }
+}
+
+static void schedule_disconnect_blinks(void) {
+    if (zmk_endpoints_selected().transport == ZMK_TRANSPORT_USB ||
+        zmk_ble_active_profile_is_connected()) {
+        return;
+    }
+
+    int64_t now = k_uptime_get();
+    if (now - last_disconnect_blink < CONFIG_RGBLED_WIDGET_DISCONNECT_BLINK_INTERVAL_MS) {
+        return;
+    }
+    last_disconnect_blink = now;
+
+    // two quick white blinks = "nobody is connected on this profile"
+    struct blink_item blink = {.color = 7 /* white */, .duration_ms = 150, .sleep_ms = 150};
+    k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
+    k_msgq_put(&led_msgq, &blink, K_NO_WAIT);
+}
+
+#endif // PROFILE_COLORS
+
 extern void led_process_thread(void *d0, void *d1, void *d2) {
     ARG_UNUSED(d0);
     ARG_UNUSED(d1);
@@ -306,26 +391,43 @@ extern void led_process_thread(void *d0, void *d1, void *d2) {
 #endif
 
     while (true) {
-        // wait until a blink item is received and process it
+        // wait until a blink item is received and process it; in profile
+        // color mode also wake periodically to refresh the persistent
+        // status (cheap: it change-detects before writing the LED)
         struct blink_item blink;
-        k_msgq_get(&led_msgq, &blink, K_FOREVER);
-        if (blink.duration_ms > 0) {
-            LOG_DBG("Got a blink item from msgq, color %d, duration %d",
-                    blink.color, blink.duration_ms);
+#if PROFILE_COLORS
+        int ret = k_msgq_get(&led_msgq, &blink, K_MSEC(250));
+#else
+        int ret = k_msgq_get(&led_msgq, &blink, K_FOREVER);
+#endif
+        if (ret == 0) {
+            if (blink.duration_ms > 0) {
+                LOG_DBG("Got a blink item from msgq, color %d, duration %d",
+                        blink.color, blink.duration_ms);
 
-            // Blink the leds, always using a separation blink
-            // We don't know RGB state, so the separation blink is useful
-            set_rgb_leds(0, CONFIG_RGBLED_WIDGET_INTERVAL_MS);
-            set_rgb_leds(blink.color, blink.duration_ms);
-            set_rgb_leds(0, CONFIG_RGBLED_WIDGET_INTERVAL_MS);
+                // Blink the leds, always using a separation blink
+                // We don't know RGB state, so the separation blink is useful
+                set_rgb_leds(0, CONFIG_RGBLED_WIDGET_INTERVAL_MS);
+                set_rgb_leds(blink.color, blink.duration_ms);
+                set_rgb_leds(0, CONFIG_RGBLED_WIDGET_INTERVAL_MS);
 
-            // wait interval before processing another blink
-            set_rgb_leds(led_layer_color, blink.sleep_ms > 0 ? blink.sleep_ms :
-                         CONFIG_RGBLED_WIDGET_INTERVAL_MS);
-        } else {
-            LOG_DBG("Got a layer color item from msgq, color %d", blink.color);
-            set_rgb_leds(blink.color, 0);
+                // wait interval before processing another blink
+                set_rgb_leds(led_layer_color, blink.sleep_ms > 0 ? blink.sleep_ms :
+                             CONFIG_RGBLED_WIDGET_INTERVAL_MS);
+            } else {
+                LOG_DBG("Got a layer color item from msgq, color %d", blink.color);
+                set_rgb_leds(blink.color, 0);
+            }
         }
+
+#if PROFILE_COLORS
+        // after any transient indication (and on every poll tick when
+        // idle), restore the persistent profile / connection display
+        if (initialized) {
+            apply_persistent_status();
+            schedule_disconnect_blinks();
+        }
+#endif
     }
 }
 
