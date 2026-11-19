@@ -184,6 +184,12 @@ static void override_for(struct zmk_led_hsb c, uint16_t ms) {
     apply_hsb(c);
 }
 
+void k04_status_led_blink_color(int8_t palette_idx) {
+    if (palette_idx >= 0 && palette_idx < 8) {
+        override_for(color_def[palette_idx], 1000);
+    }
+}
+
 // ------------------------------------------------------------- battery
 
 static struct zmk_led_hsb battery_tier_color(uint8_t level) {
@@ -243,11 +249,25 @@ static int led_profile_listener_cb(const zmk_event_t *eh) {
     if (!initialized) {
         return 0;
     }
-    // BT profile switched: profile color for one second
+    // BT profile switched: profile color for one second on BOTH halves,
+    // routed through the GLOBAL-locality layer-led behavior (param2=1
+    // selects the transient blink mode; the split transport forwards the
+    // invocation to each connected peripheral).
     uint8_t profile = zmk_ble_active_profile_index();
     uint8_t color_idx = (profile < 5) ? profile_color_idx[profile] : 0;
-    LOG_INF("Profile %d selected, showing color %d for 1s", profile, color_idx);
-    override_for(color_def[color_idx], 1000);
+    LOG_INF("Profile %d selected, blinking color %d for 1s on all halves", profile, color_idx);
+
+    struct zmk_behavior_binding binding = {
+        .behavior_dev = DEVICE_DT_GET(DT_NODELABEL(k04_layer_led)),
+        .param1 = color_idx,
+        .param2 = 1,
+    };
+    struct zmk_behavior_binding_event event = {
+        .position = 0,
+        .layer = 0,
+        .timestamp = k_uptime_get(),
+    };
+    zmk_behavior_invoke_binding(&binding, event, true);
     return 0;
 }
 
@@ -304,6 +324,19 @@ static void status_poll(void) {
     }
 
 #if IS_CENTRAL
+    // Track layer changes FIRST — before any early-return below can starve
+    // the push (disconnect patterns used to swallow it).
+    uint8_t layer = zmk_keymap_highest_layer_active();
+    if (layer != prev_layer) {
+        prev_layer = layer;
+        if (layer == 0) {
+            base_layer_since = now;
+            push_layer_led(0xFF);
+        } else {
+            push_layer_led((uint16_t)layer_color_idx[layer & 0xF]);
+        }
+    }
+
     // host connection edge: computer (USB or BT profile) connected
     bool connected;
     if (zmk_endpoints_selected().transport == ZMK_TRANSPORT_USB) {
@@ -348,17 +381,6 @@ static void status_poll(void) {
         return;
     }
 #endif // IS_ENABLED(CONFIG_ZMK_BLE)
-
-    uint8_t layer = zmk_keymap_highest_layer_active();
-    if (layer != prev_layer) {
-        prev_layer = layer;
-        if (layer == 0) {
-            base_layer_since = now;
-            push_layer_led(0xFF);
-        } else {
-            push_layer_led((uint16_t)layer_color_idx[layer & 0xF]);
-        }
-    }
 
 #else // peripheral half
     bool connected = zmk_split_bt_peripheral_is_connected();

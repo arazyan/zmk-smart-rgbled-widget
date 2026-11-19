@@ -31,7 +31,12 @@ static int behavior_layer_led_init(const struct device *dev) {
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
-    k04_status_led_set_layer_color(binding->param1 == 0xFF ? -1 : (int8_t)binding->param1);
+    if (binding->param2 == 1) {
+        /* transient mode: one full-brightness second on this half */
+        k04_status_led_blink_color((int8_t)binding->param1);
+    } else {
+        k04_status_led_set_layer_color(binding->param1 == 0xFF ? -1 : (int8_t)binding->param1);
+    }
     return ZMK_BEHAVIOR_OPAQUE;
 }
 
