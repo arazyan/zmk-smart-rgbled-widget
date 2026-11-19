@@ -13,7 +13,7 @@
  *         charging/base display).
  */
 
-#define DT_DRV_COMPAT k04__led_layer_color
+#define DT_DRV_COMPAT k04_led_layer_color
 
 #include <zephyr/device.h>
 #include <drivers/behavior.h>
