@@ -1,12 +1,15 @@
 /*
  * Smart RGB LED status widget — K:04 status language.
  *
- * Persistent display (priority order):
- *   1. non-base layer color (central only; active layer 0-15, shown the
- *      whole time the layer is active)
+ * Persistent display, PER HALF (priority order):
+ *   1. layer color — but only on the half whose key press activated the
+ *      layer (the central attributes activations via position-event
+ *      sources and pushes the color to that half only; the other half
+ *      keeps the base display)
  *   2. charging color while USB is connected: yellow, green at >= 95%
- *   3. base layer color, subject to RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS
- *      (0 = timeout disabled, i.e. always on)
+ *      3. base layer color (white by default), subject to
+ *      RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS (0 = always on) and the
+ *      key-toggle; cleared when toggled off
  *   4. off
  *
  * Transient patterns (override the persistent display):
@@ -73,26 +76,40 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if IS_CENTRAL
 #include <zmk/behavior.h>
+#include <zmk/events/position_state_changed.h>
 
-/* Push a persistent layer palette color (0xFF = clear) to every split
- * half via the GLOBAL-locality k04,led-layer-color behavior: zmk_behavior_invoke_binding
- * runs it locally on the central and forwards it to each peripheral.
- * NOTE: struct zmk_behavior_binding.behavior_dev is the behavior's NAME
- * STRING (what behavior_get_binding() strcmps against device names),
- * not a struct device pointer — the label property on the DT node names
- * the device, DT_PROP(..., label) yields the same string. */
-static void push_layer_led(uint16_t param) {
+/* Targeted push to the right half only (peripheral slot 0): unlike the
+ * zmk_behavior_invoke_binding GLOBAL broadcast, this reaches just one
+ * half — layer colors now light only the half whose key caused them. */
+static void push_right(uint32_t param1, uint32_t param2) {
     struct zmk_behavior_binding binding = {
         .behavior_dev = DT_PROP(DT_NODELABEL(k04_layer_led), label),
-        .param1 = param,
+        .param1 = param1,
+        .param2 = param2,
     };
     struct zmk_behavior_binding_event event = {
         .position = 0,
         .layer = 0,
         .timestamp = k_uptime_get(),
     };
-    zmk_behavior_invoke_binding(&binding, event, true);
+    zmk_split_central_invoke_behavior(0, &binding, event, true);
 }
+
+/* Which half pressed the most recent key: SOURCE_LOCAL (left) or a
+ * peripheral slot index (right). Layer activations are attributed to
+ * this half in the poll. */
+static uint8_t last_press_source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL;
+
+static int led_position_listener_cb(const zmk_event_t *eh) {
+    struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
+    if (ev != NULL && ev->state) {
+        last_press_source = ev->source;
+    }
+    return 0;
+}
+
+ZMK_LISTENER(led_position_listener, led_position_listener_cb);
+ZMK_SUBSCRIPTION(led_position_listener, zmk_position_state_changed);
 #endif
 
 // color palette, indices: 0 black, 1 red, 2 green, 3 yellow, 4 blue,
@@ -153,7 +170,8 @@ static int64_t last_low_battery_blink = 0;
 #if IS_CENTRAL
 static uint8_t prev_layer = 255;
 static int64_t base_layer_since = 0;
-static int32_t last_pushed_color = -2; /* force first push */
+static int32_t last_left_push = -2;  /* force first push */
+static int32_t last_right_push = -2; /* force first push */
 #endif
 
 // persistent layer color pushed to every half (palette index, -1 = none)
@@ -177,7 +195,8 @@ void k04_status_led_toggle_base_light(void) {
     base_light_enabled = !base_light_enabled;
 #if IS_CENTRAL
     /* force the central to recompute and re-push on the next tick */
-    last_pushed_color = -2;
+    last_left_push = -2;
+    last_right_push = -2;
 #endif
 }
 
@@ -272,25 +291,14 @@ static int led_profile_listener_cb(const zmk_event_t *eh) {
     if (!initialized) {
         return 0;
     }
-    // BT profile switched: profile color for one second on BOTH halves,
-    // routed through the GLOBAL-locality layer-led behavior (param2=1
-    // selects the transient blink mode; the split transport forwards the
-    // invocation to each connected peripheral).
+    // BT profile switched: profile color for one second on BOTH halves —
+    // locally on the central, and via a targeted push to the right half.
     uint8_t profile = zmk_ble_active_profile_index();
     uint8_t color_idx = (profile < 5) ? profile_color_idx[profile] : 0;
     LOG_INF("Profile %d selected, blinking color %d for 1s on all halves", profile, color_idx);
 
-    struct zmk_behavior_binding binding = {
-        .behavior_dev = DT_PROP(DT_NODELABEL(k04_layer_led), label),
-        .param1 = color_idx,
-        .param2 = 1,
-    };
-    struct zmk_behavior_binding_event event = {
-        .position = 0,
-        .layer = 0,
-        .timestamp = k_uptime_get(),
-    };
-    zmk_behavior_invoke_binding(&binding, event, true);
+    k04_status_led_blink_color((int8_t)color_idx);
+    push_right(color_idx, 1);
     return 0;
 }
 
@@ -355,22 +363,34 @@ static void status_poll(void) {
         }
     }
 
-    // Desired persistent color for ALL halves: MO layer colors always;
-    // base white only when the key-enabled base light is on and not past
-    // its timeout (timeout 0 = never expires). The 0x100 flag marks the
-    // color as "base", so charging takes priority over it but not over
-    // MO colors.
-    int32_t desired = -1;
+    // Per-half targets: an active layer lights ONLY the half whose key
+    // press caused it (last_press_source); the other half keeps the
+    // base display. Base: white while enabled (timeout 0 = always).
+    int32_t base_target =
+        (base_light_enabled &&
+         (CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS == 0 ||
+          now - base_layer_since < CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS))
+            ? (int32_t)(layer_color_idx[0] | 0x100)
+            : -1;
+
+    int32_t left_target = base_target;
+    int32_t right_target = base_target;
     if (layer > 0) {
-        desired = layer_color_idx[layer & 0xF];
-    } else if (base_light_enabled &&
-               (CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS == 0 ||
-                now - base_layer_since < CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS)) {
-        desired = layer_color_idx[0] | 0x100;
+        int32_t lc = layer_color_idx[layer & 0xF];
+        if (last_press_source == ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL) {
+            left_target = lc; // left key press: left LED only, right stays white
+        } else {
+            right_target = lc; // right key press: right LED only, left stays white
+        }
     }
-    if (desired != last_pushed_color) {
-        last_pushed_color = desired;
-        push_layer_led(desired < 0 ? 0xFF : (uint16_t)desired);
+
+    if (left_target != last_left_push) {
+        last_left_push = left_target;
+        k04_status_led_show_color(left_target < 0 ? (int16_t)0xFF : (int16_t)left_target);
+    }
+    if (right_target != last_right_push) {
+        push_right(right_target < 0 ? 0xFF : (uint32_t)right_target, 0);
+        last_right_push = right_target;
     }
 
     // host connection edge: computer (USB or BT profile) connected
@@ -389,7 +409,7 @@ static void status_poll(void) {
         prev_connected = connected;
         if (connected) {
             override_for(color_def[2], 1000); // green for one second
-            last_pushed_color = -2;           // re-announce color after edge
+            last_right_push = -2;             // re-push after the peripheral reset itself
             return;
         }
     }
