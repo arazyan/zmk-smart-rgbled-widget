@@ -11,7 +11,11 @@
          */
         k04_layer_led: k04_layer_led {
             compatible = "k04,led-layer-color";
-            label = "K04_LAYER_LED";
+            /* Name MUST stay <= 8 characters: the v0.3 BLE split
+             * protocol re-encodes behavior_dev into a 9-byte legacy
+             * payload (ZMK_SPLIT_RUN_BEHAVIOR_DEV_LEN) and anything
+             * longer is truncated and lost on the peripheral. */
+            label = "K04LED";
             #binding-cells = <2>;
         };
     };
