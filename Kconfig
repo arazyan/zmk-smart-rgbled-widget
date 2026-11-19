@@ -307,11 +307,22 @@ config RGBLED_WIDGET_PERSISTENT_BRIGHTNESS
     default 30
 
 config RGBLED_WIDGET_LOW_BATTERY_BLINK_INTERVAL_MS
-    int "Interval between low battery red blinks in ms"
-    default 2000
+    int "Interval between low battery red flashes in ms"
+    default 60000
+
+config RGBLED_WIDGET_LOW_BATTERY_CRITICAL_INTERVAL_MS
+    int "Interval between red flashes below 5% battery in ms"
+    default 15000
 
 config RGBLED_WIDGET_BATTERY_SHOW_PERIPHERALS
     bool "After its own level, also show each peripheral's battery level (split central)"
     default n
     depends on ZMK_SPLIT && ZMK_SPLIT_ROLE_CENTRAL
     select ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING
+
+DT_COMPAT_K04_LED_LAYER_COLOR := k04__led_layer_color
+
+config ZMK_BEHAVIOR_K04_LED_LAYER_COLOR
+    bool
+    default $(dt_compat_enabled,$(DT_COMPAT_K04_LED_LAYER_COLOR))
+    select SMART_RGBLED_WIDGET

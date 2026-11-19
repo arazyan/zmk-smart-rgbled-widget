@@ -1,0 +1,8 @@
+/ {
+    behaviors {
+        k04_layer_led: k04_layer_led {
+            compatible = "k04,led-layer-color";
+            #binding-cells = <1>;
+        };
+    };
+};

@@ -16,7 +16,8 @@
  *   - reconnecting to a known device: white flash (300 ms cycle)
  *   - looking for the other half (peripheral): yellow blink (500 ms cycle)
  *   - host / other half connected: green for 1 s
- *   - battery <= 20% and no USB: short red blink every 2 s
+ *   - battery <= 10% and no USB: red flash every 60 s (every 15 s
+ *     below 5%)
  *   - &ind_bat key: own charge 1 s (<=20% red, <=40% orange, <=74%
  *     yellow, else green), then each peripheral's charge 1 s
  *
@@ -69,6 +70,26 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define USB_POWERED (zmk_usb_get_conn_state() != ZMK_USB_CONN_NONE)
 
 #define IS_CENTRAL (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
+
+#if IS_CENTRAL
+#include <zmk/behavior.h>
+
+/* Push a layer palette color (0xFF = clear) to every split half via the
+ * GLOBAL-locality k04,led-layer-color behavior: zmk_behavior_invoke_binding
+ * runs it locally on the central and forwards it to each peripheral. */
+static void push_layer_led(uint16_t param) {
+    struct zmk_behavior_binding binding = {
+        .behavior_dev = DEVICE_DT_GET(DT_NODELABEL(k04_layer_led)),
+        .param1 = param,
+    };
+    struct zmk_behavior_binding_event event = {
+        .position = 0,
+        .layer = 0,
+        .timestamp = k_uptime_get(),
+    };
+    zmk_behavior_invoke_binding(&binding, event, true);
+}
+#endif
 
 // color palette, indices: 0 black, 1 red, 2 green, 3 yellow, 4 blue,
 // 5 magenta, 6 cyan, 7 white
@@ -129,6 +150,13 @@ static int64_t last_low_battery_blink = 0;
 static uint8_t prev_layer = 255;
 static int64_t base_layer_since = 0;
 #endif
+
+// persistent layer color pushed to every half (palette index, -1 = none)
+static int8_t layer_led_color = -1;
+
+void k04_status_led_set_layer_color(int8_t palette_idx) {
+    layer_led_color = palette_idx;
+}
 
 // -------------------------------------------------------------- LED helpers
 
@@ -326,6 +354,9 @@ static void status_poll(void) {
         prev_layer = layer;
         if (layer == 0) {
             base_layer_since = now;
+            push_layer_led(0xFF);
+        } else {
+            push_layer_led((uint16_t)layer_color_idx[layer & 0xF]);
         }
     }
 
@@ -338,6 +369,8 @@ static void status_poll(void) {
             override_for(color_def[2], 1000); // green for one second
             return;
         }
+        // link lost: drop the stale layer color pushed by the central
+        k04_status_led_set_layer_color(-1);
     }
 
     if (!connected) {
@@ -352,14 +385,17 @@ static void status_poll(void) {
     }
 #endif // IS_CENTRAL / peripheral
 
-    // low battery: short red blink every interval, not while charging
+    // low battery: red flash while under 10%, more often under 5%
     uint8_t level = 0;
 #if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING)
     level = zmk_battery_state_of_charge();
-    if (level > 0 && level <= 20 && !usb) {
-        if (now - last_low_battery_blink >= CONFIG_RGBLED_WIDGET_LOW_BATTERY_BLINK_INTERVAL_MS) {
+    if (level > 0 && level <= 10 && !usb) {
+        int64_t interval = level <= 5
+                               ? CONFIG_RGBLED_WIDGET_LOW_BATTERY_CRITICAL_INTERVAL_MS
+                               : CONFIG_RGBLED_WIDGET_LOW_BATTERY_BLINK_INTERVAL_MS;
+        if (now - last_low_battery_blink >= interval) {
             last_low_battery_blink = now;
-            override_for(color_def[1], 100); // short red blink
+            override_for(color_def[1], 200); // visible red flash
             return;
         }
     }
@@ -367,13 +403,12 @@ static void status_poll(void) {
 
     // ------------------------------------------------ persistent display
 
-#if IS_CENTRAL
-    if (layer > 0) {
-        // non-base layers stay lit while active and win over charging
-        apply_hsb(hsb_dim(color_def[layer_color_idx[layer & 0xF]]));
+    if (layer_led_color >= 0) {
+        /* layer color pushed to this half (works on peripherals, which
+         * have no layer state of their own); wins over charging/base */
+        apply_hsb(hsb_dim(color_def[layer_led_color]));
         return;
     }
-#endif
 
     if (usb) {
         // charging: yellow, green at 95%+

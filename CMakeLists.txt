@@ -1,4 +1,5 @@
 target_sources_ifdef(CONFIG_SMART_RGBLED_WIDGET app PRIVATE src/widget.c)
 target_sources_ifdef(CONFIG_ZMK_BEHAVIOR_RGBLED_WIDGET app PRIVATE src/behaviors/behavior_rgbled_widget.c)
+target_sources_ifdef(CONFIG_ZMK_BEHAVIOR_K04_LED_LAYER_COLOR app PRIVATE src/behavior_layer_led.c)
 
 zephyr_include_directories(include)
