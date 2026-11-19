@@ -149,13 +149,32 @@ static int64_t last_low_battery_blink = 0;
 #if IS_CENTRAL
 static uint8_t prev_layer = 255;
 static int64_t base_layer_since = 0;
+static int32_t last_pushed_color = -2; /* force first push */
 #endif
 
 // persistent layer color pushed to every half (palette index, -1 = none)
 static int8_t layer_led_color = -1;
+static bool layer_color_is_base = false;
 
-void k04_status_led_set_layer_color(int8_t palette_idx) {
-    layer_led_color = palette_idx;
+// key-toggled: whether the base-layer (white) display is allowed at all
+static bool base_light_enabled = true;
+
+void k04_status_led_show_color(int16_t param) {
+    if (param == 0xFF) {
+        layer_led_color = -1;
+        layer_color_is_base = false;
+    } else {
+        layer_led_color = param & 0xFF;
+        layer_color_is_base = (param & 0x100) != 0;
+    }
+}
+
+void k04_status_led_toggle_base_light(void) {
+    base_light_enabled = !base_light_enabled;
+#if IS_CENTRAL
+    /* force the central to recompute and re-push on the next tick */
+    last_pushed_color = -2;
+#endif
 }
 
 // -------------------------------------------------------------- LED helpers
@@ -324,17 +343,30 @@ static void status_poll(void) {
     }
 
 #if IS_CENTRAL
-    // Track layer changes FIRST — before any early-return below can starve
-    // the push (disconnect patterns used to swallow it).
     uint8_t layer = zmk_keymap_highest_layer_active();
     if (layer != prev_layer) {
         prev_layer = layer;
         if (layer == 0) {
             base_layer_since = now;
-            push_layer_led(0xFF);
-        } else {
-            push_layer_led((uint16_t)layer_color_idx[layer & 0xF]);
         }
+    }
+
+    // Desired persistent color for ALL halves: MO layer colors always;
+    // base white only when the key-enabled base light is on and not past
+    // its timeout (timeout 0 = never expires). The 0x100 flag marks the
+    // color as "base", so charging takes priority over it but not over
+    // MO colors.
+    int32_t desired = -1;
+    if (layer > 0) {
+        desired = layer_color_idx[layer & 0xF];
+    } else if (base_light_enabled &&
+               (CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS == 0 ||
+                now - base_layer_since < CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS)) {
+        desired = layer_color_idx[0] | 0x100;
+    }
+    if (desired != last_pushed_color) {
+        last_pushed_color = desired;
+        push_layer_led(desired < 0 ? 0xFF : (uint16_t)desired);
     }
 
     // host connection edge: computer (USB or BT profile) connected
@@ -353,6 +385,7 @@ static void status_poll(void) {
         prev_connected = connected;
         if (connected) {
             override_for(color_def[2], 1000); // green for one second
+            last_pushed_color = -2;           // re-announce color after edge
             return;
         }
     }
@@ -392,7 +425,7 @@ static void status_poll(void) {
             return;
         }
         // link lost: drop the stale layer color pushed by the central
-        k04_status_led_set_layer_color(-1);
+        k04_status_led_show_color(0xFF);
     }
 
     if (!connected) {
@@ -425,26 +458,19 @@ static void status_poll(void) {
 
     // ------------------------------------------------ persistent display
 
-    if (layer_led_color >= 0) {
-        /* layer color pushed to this half (works on peripherals, which
-         * have no layer state of their own); wins over charging/base */
-        apply_hsb(hsb_dim(color_def[layer_led_color]));
-        return;
-    }
-
-    if (usb) {
-        // charging: yellow, green at 95%+
+    /* Charging takes priority over the base-layer color, but never over
+     * an active MO layer color. */
+    if (usb && (layer_led_color < 0 || layer_color_is_base)) {
         apply_hsb(hsb_dim(level >= 95 ? color_def[2] : color_def[3]));
         return;
     }
 
-#if IS_CENTRAL
-    if (CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS == 0 ||
-        now - base_layer_since < CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS) {
-        apply_hsb(hsb_dim(color_def[layer_color_idx[0]]));
+    if (layer_led_color >= 0) {
+        /* color pushed to this half (layer colors work on peripherals,
+         * which have no layer state of their own) */
+        apply_hsb(hsb_dim(color_def[layer_led_color]));
         return;
     }
-#endif
 
     apply_black();
 }

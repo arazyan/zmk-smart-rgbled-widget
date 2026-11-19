@@ -31,11 +31,16 @@ static int behavior_layer_led_init(const struct device *dev) {
 
 static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
-    if (binding->param2 == 1) {
-        /* transient mode: one full-brightness second on this half */
-        k04_status_led_blink_color((int8_t)binding->param1);
-    } else {
-        k04_status_led_set_layer_color(binding->param1 == 0xFF ? -1 : (int8_t)binding->param1);
+    switch (binding->param2) {
+    case 1: /* transient: one full-brightness second */
+        k04_status_led_blink_color((int8_t)(binding->param1 & 0xFF));
+        break;
+    case 2: /* settings: toggle the base-layer light */
+        k04_status_led_toggle_base_light();
+        break;
+    default: /* persistent: (possibly base-flagged) layer color */
+        k04_status_led_show_color((int16_t)binding->param1);
+        break;
     }
     return ZMK_BEHAVIOR_OPAQUE;
 }

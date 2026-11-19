@@ -1,8 +1,17 @@
 / {
     behaviors {
+        /* Modes (param2):
+         *   0 = persistent color: param1 = palette idx 0-7, optional
+         *       0x100 flag marks it as the base-layer color (charging
+         *       wins over it), 0xFF = clear
+         *   1 = transient: one full-brightness second of param1 color
+         *   2 = toggle the key-enabled base-layer light
+         * Invoked from C on the central (layer pushes, profile blinks);
+         * bound in keymaps for user-facing switches.
+         */
         k04_layer_led: k04_layer_led {
             compatible = "k04,led-layer-color";
-            #binding-cells = <1>;
+            #binding-cells = <2>;
         };
     };
 };

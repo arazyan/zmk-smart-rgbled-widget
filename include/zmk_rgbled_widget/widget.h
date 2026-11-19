@@ -18,9 +18,12 @@ void indicate_connectivity(void);
 void indicate_layer(void);
 #endif
 
-/* Shared with the k04,led-layer-color behavior: sets the persistent
- * layer palette color (-1 = none) shown on this half. */
-void k04_status_led_set_layer_color(int8_t palette_idx);
+/* Shared with the k04,led-layer-color behavior. Persistent display:
+ * palette index, optional 0x100 "base color" flag, 0xFF = clear. */
+void k04_status_led_show_color(int16_t param);
 
 /* Transient one-second full-brightness blink on this half. */
 void k04_status_led_blink_color(int8_t palette_idx);
+
+/* Key-toggled switch for the always-lit base-layer color. */
+void k04_status_led_toggle_base_light(void);

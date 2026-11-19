@@ -1,5 +1,5 @@
-description: Push a persistent status LED palette color to all split halves
+description: Drive the status LED color state (persistent / blink / toggle)
 
 compatible: "k04,led-layer-color"
 
-include: one_param.yaml
+include: two_param.yaml
