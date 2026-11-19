@@ -63,6 +63,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
  * app/src/rgb_underglow.c — SOLID is its first member. */
 #define UNDERGLOW_EFFECT_SOLID_COMPAT 0
 
+/* ZMK v0.3 compatibility: USB_POWERED only exists in newer
+ * ZMK; v0.3 exposes zmk_usb_get_conn_state(). "USB power present" is
+ * the charging condition (POWERED or HID). */
+#define USB_POWERED (zmk_usb_get_conn_state() != ZMK_USB_CONN_NONE)
+
 #define IS_CENTRAL (!IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL))
 
 // color palette, indices: 0 black, 1 red, 2 green, 3 yellow, 4 blue,
@@ -231,7 +236,7 @@ static int led_activity_listener_cb(const zmk_event_t *eh) {
     case ZMK_ACTIVITY_SLEEP:
         asleep = true;
         // LED off in sleep unless the half is powered from USB
-        if (!zmk_usb_is_connected()) {
+        if (!USB_POWERED) {
             apply_black();
         }
         break;
@@ -251,7 +256,7 @@ ZMK_SUBSCRIPTION(led_activity_listener, zmk_activity_state_changed);
 
 static void status_poll(void) {
     int64_t now = k_uptime_get();
-    bool usb = zmk_usb_is_connected();
+    bool usb = USB_POWERED;
 
     if (asleep) {
         return; // parked black by the activity listener (or on USB power)
