@@ -2,10 +2,10 @@
  * Smart RGB LED status widget — K:04 status language.
  *
  * Persistent display, PER HALF (priority order):
- *   1. layer color — but only on the half whose key press activated the
- *      layer (the central attributes activations via position-event
- *      sources and pushes the color to that half only; the other half
- *      keeps the base display)
+ *   1. layer color — language layers (0 en / 1 ru) on BOTH halves (they
+ *      change what keys on both halves type); MO layers 2+ only on the
+ *      half whose key press activated the layer (attributed via
+ *      position-event sources; the other half keeps the base display)
  *   2. charging color while USB is connected: yellow, green at >= 95%
  *      3. base layer color (white by default), subject to
  *      RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS (0 = always on) and the
@@ -158,12 +158,9 @@ static bool asleep = false;
 // peripheral: split link to the central)
 static bool prev_connected = false;
 
-// override: show override_color until override_until; then optionally a
-// second stage (peripheral battery in the &ind_bat sequence)
+// override: show override_color until override_until
 static int64_t override_until = 0;
 static struct zmk_led_hsb override_color;
-static bool override_second_pending = false;
-static struct zmk_led_hsb override_second_color;
 
 static int64_t last_low_battery_blink = 0;
 
@@ -222,7 +219,6 @@ static void apply_black(void) {
 static void override_for(struct zmk_led_hsb c, uint16_t ms) {
     override_color = c;
     override_until = k_uptime_get() + ms;
-    override_second_pending = false;
     apply_hsb(c);
 }
 
@@ -252,23 +248,15 @@ static struct zmk_led_hsb battery_tier_color(uint8_t level) {
 
 #if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING)
 void indicate_battery(void) {
+    /* One symmetric second of this half's own charge tier. The halves
+     * blink in parallel (GLOBAL-locality keymap behavior), so a second
+     * stage showing the peripheral's level on the central made the left
+     * LED visibly outlast the right one — dropped. */
     uint8_t level = zmk_battery_state_of_charge();
 
     override_color = battery_tier_color(level);
     override_until = k_uptime_get() + 1000;
     apply_hsb(override_color);
-
-#if IS_CENTRAL && IS_ENABLED(CONFIG_RGBLED_WIDGET_BATTERY_SHOW_PERIPHERALS)
-    /* follow up with one second per peripheral's own charge */
-    uint8_t peripheral_level = 0;
-    for (uint8_t i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
-        if (ZMK_SPLIT_CENTRAL_BATTERY_GET(i, &peripheral_level) == 0 && peripheral_level > 0) {
-            override_second_color = battery_tier_color(peripheral_level);
-            override_second_pending = true;
-            break;
-        }
-    }
-#endif
 }
 #endif
 
@@ -331,7 +319,7 @@ ZMK_SUBSCRIPTION(led_activity_listener, zmk_activity_state_changed);
 
 // --------------------------------------------------------- state machine
 
-#define STATUS_POLL_MS 100
+#define STATUS_POLL_MS 30
 
 static void status_poll(void) {
     int64_t now = k_uptime_get();
@@ -346,13 +334,6 @@ static void status_poll(void) {
         apply_hsb(override_color);
         return;
     }
-    if (override_second_pending) {
-        override_second_pending = false;
-        override_color = override_second_color;
-        override_until = now + 1000;
-        apply_hsb(override_color);
-        return;
-    }
 
 #if IS_CENTRAL
     uint8_t layer = zmk_keymap_highest_layer_active();
@@ -363,9 +344,11 @@ static void status_poll(void) {
         }
     }
 
-    // Per-half targets: an active layer lights ONLY the half whose key
-    // press caused it (last_press_source); the other half keeps the
-    // base display. Base: white while enabled (timeout 0 = always).
+    // Per-half targets. Language layers 0-1 are GLOBAL — they change
+    // what keys on both halves type, so both LEDs show the color. MO
+    // layers 2+ light only the half whose key press caused them
+    // (last_press_source). Base: white while enabled (timeout 0 =
+    // always).
     int32_t base_target =
         (base_light_enabled &&
          (CONFIG_RGBLED_WIDGET_BASE_LAYER_TIMEOUT_MS == 0 ||
@@ -375,7 +358,10 @@ static void status_poll(void) {
 
     int32_t left_target = base_target;
     int32_t right_target = base_target;
-    if (layer > 0) {
+    if (layer == 1) {
+        // language layer: both halves
+        left_target = right_target = layer_color_idx[1];
+    } else if (layer > 1) {
         int32_t lc = layer_color_idx[layer & 0xF];
         if (last_press_source == ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL) {
             left_target = lc; // left key press: left LED only, right stays white
