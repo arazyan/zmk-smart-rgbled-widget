@@ -74,12 +74,16 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #if IS_CENTRAL
 #include <zmk/behavior.h>
 
-/* Push a layer palette color (0xFF = clear) to every split half via the
- * GLOBAL-locality k04,led-layer-color behavior: zmk_behavior_invoke_binding
- * runs it locally on the central and forwards it to each peripheral. */
+/* Push a persistent layer palette color (0xFF = clear) to every split
+ * half via the GLOBAL-locality k04,led-layer-color behavior: zmk_behavior_invoke_binding
+ * runs it locally on the central and forwards it to each peripheral.
+ * NOTE: struct zmk_behavior_binding.behavior_dev is the behavior's NAME
+ * STRING (what behavior_get_binding() strcmps against device names),
+ * not a struct device pointer — the label property on the DT node names
+ * the device, DT_PROP(..., label) yields the same string. */
 static void push_layer_led(uint16_t param) {
     struct zmk_behavior_binding binding = {
-        .behavior_dev = DEVICE_DT_GET(DT_NODELABEL(k04_layer_led)),
+        .behavior_dev = DT_PROP(DT_NODELABEL(k04_layer_led), label),
         .param1 = param,
     };
     struct zmk_behavior_binding_event event = {
@@ -277,7 +281,7 @@ static int led_profile_listener_cb(const zmk_event_t *eh) {
     LOG_INF("Profile %d selected, blinking color %d for 1s on all halves", profile, color_idx);
 
     struct zmk_behavior_binding binding = {
-        .behavior_dev = DEVICE_DT_GET(DT_NODELABEL(k04_layer_led)),
+        .behavior_dev = DT_PROP(DT_NODELABEL(k04_layer_led), label),
         .param1 = color_idx,
         .param2 = 1,
     };

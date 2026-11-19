@@ -11,6 +11,7 @@
          */
         k04_layer_led: k04_layer_led {
             compatible = "k04,led-layer-color";
+            label = "K04_LAYER_LED";
             #binding-cells = <2>;
         };
     };
