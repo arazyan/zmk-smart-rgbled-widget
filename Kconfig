@@ -306,6 +306,15 @@ config RGBLED_WIDGET_PERSISTENT_BRIGHTNESS
     range 0 100
     default 30
 
+config RGBLED_WIDGET_LOW_BATTERY_LEVEL
+    int "Battery level percentage at/below which the red warning blink runs"
+    range 1 100
+    default 20
+    help
+      Red warning blink threshold. 20 matches the official Ergo Haven
+      K:04 status language ("red blink at 20% or below, not charging");
+      the widget previously hard-coded 10 here.
+
 config RGBLED_WIDGET_LOW_BATTERY_BLINK_INTERVAL_MS
     int "Interval between low battery red flashes in ms"
     default 60000
